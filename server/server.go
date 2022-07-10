@@ -47,6 +47,15 @@ func NewServer(groupToken string, secretToken string) *Server {
 		log.Panic(err)
 	}
 
+	sendMessage := func(peerID int, message string) (int, error) {
+		log.Printf("[INFO] send to %d: %s", peerID, message)
+		builder := params.NewMessagesSendBuilder()
+		builder.Message(message)
+		builder.RandomID(0)
+		builder.PeerID(peerID)
+		return api.MessagesSend(vk_api.Params(builder.Params))
+	}
+
 	lp.MessageNew(func(ctx context.Context, mno events.MessageNewObject) {
 		log.Printf("[INFO] got message from %d: %s", mno.Message.PeerID, mno.Message.Text)
 		go func() {
@@ -74,48 +83,49 @@ func NewServer(groupToken string, secretToken string) *Server {
 					select {
 					case operatorID := <-cc.HasFree:
 						message = fmt.Sprintf("Ссылка для связи с оператором: %s", cc.GetLink(operatorID))
-
-						builder := params.NewMessagesSendBuilder()
-						builder.Message(fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
-						builder.RandomID(0)
-						builder.PeerID(operatorID)
-						api.MessagesSend(vk_api.Params(builder.Params))
+						sendMessage(operatorID, fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
 					default:
 						waitList.Store(mno.Message.PeerID, struct{}{})
 						message = "Свободных операторов нет. С вами свяжутся при первой возможности"
 						go func() {
 							operatorID := <-cc.HasFree
-							builder := params.NewMessagesSendBuilder()
-							builder.Message(fmt.Sprintf("Ссылка для связи с оператором: %s", cc.GetLink(operatorID)))
-							builder.RandomID(0)
-							builder.PeerID(mno.Message.PeerID)
-							api.MessagesSend(vk_api.Params(builder.Params))
-
-							builder.Message(fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
-							builder.RandomID(0)
-							builder.PeerID(operatorID)
-							api.MessagesSend(vk_api.Params(builder.Params))
-
+							sendMessage(mno.Message.PeerID, fmt.Sprintf("Ссылка для связи с оператором: %s", cc.GetLink(operatorID)))
+							sendMessage(operatorID, fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
 							cc.SetBusy(operatorID)
 						}()
 					}
 				}
 			} else if strings.EqualFold(mno.Message.Text, "хочу быть оператором") {
-				var res map[string]interface{}
-				userAPI.RequestUnmarshal("messages.startCall", &res, vk_api.Params{})
-				cc.AddOperator(mno.Message.PeerID, res["join_link"].(string))
-
-				message = fmt.Sprintf("Поздравляю! Теперь вы оператор! Ваша ссылка:\n%s", cc.GetLink(mno.Message.PeerID))
+				if cc.IsOperator(mno.Message.PeerID) {
+					message = "Вы уже оператор!"
+				} else {
+					var res map[string]interface{}
+					err := userAPI.RequestUnmarshal("messages.startCall", &res, vk_api.Params{})
+					if err != nil {
+						log.Println("[ERROR] messages.startCall: ", err)
+					} else {
+						link, ok := res["join_link"]
+						if !ok {
+							log.Println("[ERROR] messages.startCall: no link")
+						} else {
+							cc.AddOperator(mno.Message.PeerID, res["join_link"].(string))
+							log.Printf("[INFO] new operator %d with link: %s\n", mno.Message.PeerID, link)
+							message = fmt.Sprintf("Поздравляю! Теперь вы оператор! Ваша ссылка:\n%s", cc.GetLink(mno.Message.PeerID))
+						}
+					}
+				}
 			} else if strings.EqualFold(mno.Message.Text, "я свободен") {
-				cc.SetFree(mno.Message.PeerID)
-				return
+				if cc.IsOperator(mno.Message.PeerID) {
+					if cc.IsBusy(mno.Message.PeerID) {
+						message = "Ожидайте следующего клиента"
+						cc.SetFree(mno.Message.PeerID)
+					} else {
+						message = "Вы уже сообщали, что свободны. Ожидайте следующего клиента"
+					}
+				}
 			}
 
-			builder := params.NewMessagesSendBuilder()
-			builder.Message(message)
-			builder.RandomID(0)
-			builder.PeerID(mno.Message.PeerID)
-			api.MessagesSend(vk_api.Params(builder.Params))
+			sendMessage(mno.Message.PeerID, message)
 		}()
 	})
 
@@ -132,5 +142,11 @@ func NewServer(groupToken string, secretToken string) *Server {
 }
 
 func (s *Server) Run() error {
+	log.Println("[INFO] Start serving")
 	return s.lp.Run()
+}
+
+func (s *Server) Shutdown() {
+	fmt.Println("[INFO] Gracefully shuttinh down...")
+	s.lp.Shutdown()
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/viper"
 
@@ -22,7 +24,6 @@ func init() {
 		log.Println("Get from OS env")
 		viper.Set("GROUP_TOKEN", os.Getenv("GROUP_TOKEN"))
 		viper.Set("SECRET", os.Getenv("SECRET"))
-		viper.Set("PORT", os.Getenv("PORT"))
 	}
 }
 
@@ -31,6 +32,14 @@ func main() {
 	secretToken := viper.GetString("SECRET")
 
 	server := server.NewServer(groupToken, secretToken)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	go func() {
+		<-quit
+		server.Shutdown()
+	}()
 
 	if err := server.Run(); err != nil {
 		log.Panic(err)

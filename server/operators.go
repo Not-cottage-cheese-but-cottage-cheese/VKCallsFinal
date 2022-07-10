@@ -50,6 +50,14 @@ func (cc *CallCenter) SetFree(ID int) {
 	}()
 }
 
+func (cc *CallCenter) IsOperator(ID int) bool {
+	cc.m.RLock()
+	defer cc.m.RUnlock()
+
+	_, ok := cc.Operators[ID]
+	return ok
+}
+
 func (cc *CallCenter) SetBusy(ID int) {
 	cc.m.Lock()
 	defer cc.m.Unlock()
