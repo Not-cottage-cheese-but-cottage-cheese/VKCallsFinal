@@ -82,13 +82,14 @@ func NewServer(groupToken string, secretToken string) *Server {
 				} else {
 					select {
 					case operatorID := <-cc.HasFree:
-						waitList.Delete(mno.Message.PeerID)
 						message = fmt.Sprintf("Ссылка для связи с оператором: %s", cc.GetLink(operatorID))
 						sendMessage(operatorID, fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
 					default:
 						waitList.Store(mno.Message.PeerID, struct{}{})
 						message = "Свободных операторов нет. С вами свяжутся при первой возможности"
 						go func() {
+							waitList.Delete(mno.Message.PeerID)
+
 							operatorID := <-cc.HasFree
 							sendMessage(mno.Message.PeerID, fmt.Sprintf("Ссылка для связи с оператором: %s", cc.GetLink(operatorID)))
 							sendMessage(operatorID, fmt.Sprintf("У вас новый клиент. Напоминаю вашу ссылку:\n%s", cc.GetLink(operatorID)))
